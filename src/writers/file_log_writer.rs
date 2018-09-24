@@ -14,6 +14,10 @@ use std::io::{self, BufRead, BufReader, LineWriter, Write};
 use std::ops::{Add, DerefMut};
 use std::path::Path;
 use std::sync::Mutex;
+use glob::Paths;
+use glob::PatternError;
+use std::vec::Vec;
+use std::path::PathBuf;
 
 // The immutable configuration of a FileLogWriter.
 struct FileLogWriterConfig {
@@ -24,6 +28,7 @@ struct FileLogWriterConfig {
     use_timestamp: bool,
     append: bool,
     rotate_over_size: Option<u64>,
+    max_backup: Option<u16>,
     create_symlink: Option<String>,
 }
 impl FileLogWriterConfig {
@@ -36,6 +41,7 @@ impl FileLogWriterConfig {
             suffix: "log".to_string(),
             use_timestamp: true,
             append: false,
+            max_backup: None,
             rotate_over_size: None,
             create_symlink: None,
         }
@@ -120,6 +126,14 @@ impl FileLogWriterBuilder {
         self
     }
 
+    /// By default, if there is a rotate_over_size defined the count of backup file
+    /// will grow indefinitely. If a max_backup is set, the count of backuo file will
+    /// be limited to max value
+    pub fn max_backup(mut self, max_backup: usize) -> FileLogWriterBuilder {
+        self.config.max_backup = Some(max_backup as u16);
+        self
+    }
+
     /// Makes the logger append to the given file, if it exists; by default, the file would be
     /// truncated.
     pub fn append(mut self) -> FileLogWriterBuilder {
@@ -193,6 +207,14 @@ impl FileLogWriterBuilder {
     pub fn o_rotate_over_size(mut self, rotate_over_size: Option<usize>) -> FileLogWriterBuilder {
         self.config.rotate_over_size = rotate_over_size.map(|r| r as u64);
         self.config.use_timestamp = false;
+        self
+    }
+
+    /// By default, if there is a rotate_over_size defined the count of backup file
+    /// will grow indefinitely. If a max_backup is set, the count of backuo file will
+    /// be limited to max value
+    pub fn o_max_backup(mut self, max_backup: Option<usize>) -> FileLogWriterBuilder {
+        self.config.max_backup = max_backup.map(|r| r as u16);
         self
     }
 
@@ -318,15 +340,8 @@ fn get_linewriter(
 
 fn get_highest_rotate_idx(filename_base: &str, suffix: &str) -> u32 {
     let mut rotate_idx = 0;
-    let fn_pattern = String::with_capacity(180)
-        .add(filename_base)
-        .add("_r*")
-        .add(".")
-        .add(suffix);
-    match glob(&fn_pattern) {
-        Err(e) => {
-            eprintln!("Listing files with ({}) failed with {}", fn_pattern, e);
-        }
+    match list_log_files(filename_base, suffix) {
+        Err(_e) => {}
         Ok(globresults) => for globresult in globresults {
             match globresult {
                 Err(e) => eprintln!(
@@ -342,7 +357,20 @@ fn get_highest_rotate_idx(filename_base: &str, suffix: &str) -> u32 {
             }
         },
     }
+
     rotate_idx
+}
+
+fn list_log_files(filename_base: &str, suffix: &str) -> Result<Paths, PatternError> {
+    let fn_pattern = String::with_capacity(180)
+        .add(filename_base)
+        .add("_r*")
+        .add(".")
+        .add(suffix);
+    glob(&fn_pattern).or_else(|error| {
+        eprintln!("Listing files with ({}) failed with {}", fn_pattern, error);
+        Err(error)
+    })
 }
 
 /// A configurable `LogWriter` that writes to a file or, if rotation is used, a sequence of files.
@@ -417,6 +445,21 @@ impl LogWriter for FileLogWriter {
                     .unwrap_or_else(|e| {
                         eprintln!("FlexiLogger: opening file failed with {}", e);
                     });
+
+                if let Some(max_backup) = self.config.max_backup {
+                    let _ = list_log_files(self.config.filename_base.as_ref().unwrap(), &self.config.suffix)
+                        .map(|globresults| {
+                            let mut files_path = globresults.filter_map(|pathbuf| pathbuf.ok()).collect::<Vec<PathBuf>>();
+
+                            files_path.sort_by(|a, b| b.cmp(a));
+
+                            while files_path.len() as u16 > max_backup {
+                                files_path.pop().map(|file| fs::remove_file(file.as_path()));
+
+                            }
+                        });
+
+                }
             }
         }
 

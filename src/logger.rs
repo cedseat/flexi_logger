@@ -419,6 +419,18 @@ impl Logger {
         self
     }
 
+    /// This option only has an effect if `log_to_file` is set to true.
+    ///
+    /// By default, if there is a rotate_over_size defined the count of backup file
+    /// will grow indefinitely. If a max_backup is set, the count of backuo file will
+    /// be limited to max value
+    pub fn max_backup(mut self, max_backup: usize) -> Logger {
+        self.flwb = self
+            .flwb
+            .max_backup(max_backup);
+        self
+    }
+
     /// Makes the logger append to the specified output file, if it exists already;
     /// by default, the file would be truncated.
     ///
@@ -506,6 +518,18 @@ impl Logger {
     /// With None, the log files are created in the folder where the program was started.
     pub fn o_directory<S: Into<String>>(mut self, directory: Option<S>) -> Logger {
         self.flwb = self.flwb.o_directory(directory);
+        self
+    }
+
+    /// This option only has an effect if `log_to_file` is set to true.
+    ///
+    /// By default, if there is a rotate_over_size defined the count of backup file
+    /// will grow indefinitely. If a max_backup is set, the count of backuo file will
+    /// be limited to max value
+    pub fn o_max_backup(mut self, max_backup: Option<usize>) -> Logger {
+        self.flwb = self
+            .flwb
+            .o_max_backup(max_backup);
         self
     }
 
